@@ -21,9 +21,6 @@ jobs:
       with:
         dotnet-version: '7.0.x'  # Adjust this to your .NET version if needed
     
-    - name: Install dotnet-format-file
-      run: dotnet tool install -g dotnet-format-file
-    
     - name: Get changed files
       id: changed-files
       run: |
@@ -34,20 +31,19 @@ jobs:
         fi
         echo "files=$changed_files" >> $GITHUB_OUTPUT
     
-    - name: Run dotnet-format-file
-      if: steps.changed-files.outputs.files
-      run: |
-        for file in ${{ steps.changed-files.outputs.files }}; do
-          dotnet-format-file "$file" --check --verbosity detailed
-        done
-    
-    - name: Install and run StyleCop
+    - name: Create temp project and run dotnet format
       if: steps.changed-files.outputs.files
       run: |
         dotnet new console -n TempProject
         cd TempProject
-        dotnet add package StyleCop.Analyzers
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
+          dotnet format --verify-no-changes --include $(basename $file)
         done
+    
+    - name: Run StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
+        dotnet add package StyleCop.Analyzers
         dotnet build /p:TreatWarningsAsErrors=true
