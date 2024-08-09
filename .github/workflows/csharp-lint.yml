@@ -1,4 +1,4 @@
-name: C# File Linting on Main
+name: CSharp File Linting on Main
 
 on:
   push:
