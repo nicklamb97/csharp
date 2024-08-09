@@ -1,26 +1,22 @@
-name: CSharp File Linting on Main
-
+name: C# File Linting and Auto-Fix
 on:
   push:
     branches:
       - main
     paths:
       - '**.cs'
-
 jobs:
-  lint:
+  lint-and-fix:
     runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 2
-
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: '7.0.x'
-
     - name: Get changed files
       id: changed-files
       run: |
@@ -30,40 +26,84 @@ jobs:
           exit 0
         fi
         echo "files=$changed_files" >> $GITHUB_OUTPUT
-
-    - name: Create temp project and run dotnet format
+    - name: Create temp project and run StyleCop
       if: steps.changed-files.outputs.files
       run: |
         dotnet new console -n TempProject
         cd TempProject
         rm Program.cs
+        dotnet add package StyleCop.Analyzers
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
-          dotnet format --verify-no-changes --include $(basename $file)
         done
-
-    - name: Configure StyleCop
+        dotnet build /p:TreatWarningsAsErrors=true > build_output.txt 2>&1 || true
+    - name: Extract StyleCop errors
       if: steps.changed-files.outputs.files
+      id: extract-errors
       run: |
         cd TempProject
-        echo '{
-          "$schema": "https://raw.githubusercontent.com/DotNetAnalyzers/StyleCopAnalyzers/master/StyleCop.Analyzers/StyleCop.Analyzers/Settings/stylecop.schema.json",
-          "settings": {
-            "documentationRules": {
-              "companyName": "YourCompany"
+        errors=$(grep -E ': error SA[0-9]+:' build_output.txt || true)
+        if [ -z "$errors" ]; then
+          echo "No StyleCop errors found"
+          exit 0
+        fi
+        echo "errors<<EOF" >> $GITHUB_OUTPUT
+        echo "$errors" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    - name: Send errors to HuggingFace model and get fixes
+      if: steps.extract-errors.outputs.errors
+      id: hf-fixes
+      env:
+        HF_API_TOKEN: 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
+      run: |
+        response=$(curl https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407 \
+          -X POST \
+          -H "Authorization: Bearer $HF_API_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "inputs": "You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets.\n\nStyleCop errors:\n${{ steps.extract-errors.outputs.errors }}\n\nPlease provide fixes for these errors."
+          }')
+        fixes=$(echo $response | jq -r '.generated_text')
+        echo "fixes<<EOF" >> $GITHUB_OUTPUT
+        echo "$fixes" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+    - name: Apply fixes
+      if: steps.hf-fixes.outputs.fixes
+      run: |
+        cd TempProject
+        echo "${{ steps.hf-fixes.outputs.fixes }}" > fixes.txt
+        for file in *.cs; do
+          awk '
+            NR==FNR {
+              fixes[$1] = $0
+              next
             }
-          }
-        }' > stylecop.json
-        echo '<Project>
-          <PropertyGroup>
-            <GenerateDocumentationFile>true</GenerateDocumentationFile>
-            <NoWarn>$(NoWarn),1591,SA1633</NoWarn>
-          </PropertyGroup>
-        </Project>' > Directory.Build.props
-
-    - name: Run StyleCop
-      if: steps.changed-files.outputs.files
+            {
+              for (pattern in fixes) {
+                if ($0 ~ pattern) {
+                  print fixes[pattern]
+                  next
+                }
+              }
+              print
+            }
+          ' fixes.txt "$file" > "${file}.fixed"
+          mv "${file}.fixed" "$file"
+        done
+    - name: Create new branch and push changes
+      if: steps.hf-fixes.outputs.fixes
       run: |
-        cd TempProject
-        dotnet add package StyleCop.Analyzers
-        dotnet build /p:TreatWarningsAsErrors=true
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        branch_name="stylecop-fixes-$(date +%Y%m%d%H%M%S)"
+        git checkout -b $branch_name
+        git add .
+        git commit -m "Apply StyleCop fixes" || echo "No changes to commit"
+        git push -u origin $branch_name
+    - name: Create Pull Request
+      if: steps.hf-fixes.outputs.fixes
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        pr_url=$(gh pr create --title "StyleCop Fixes" --body "This PR contains automated StyleCop fixes." --base main --head $branch_name)
+        echo "Pull request created: $pr_url"
