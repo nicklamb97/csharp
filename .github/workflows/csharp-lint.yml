@@ -67,7 +67,7 @@ jobs:
         echo "Sending prompt to HuggingFace model:"
         echo "$prompt"
         
-        response=$(curl -s https://api-inference.huggingface.co/models/YOUR_MODEL_NAME \
+        response=$(curl -s https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407 \
           -X POST \
           -H "Authorization: Bearer $HF_API_TOKEN" \
           -H "Content-Type: application/json" \
