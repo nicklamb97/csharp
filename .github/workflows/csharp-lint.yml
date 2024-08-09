@@ -34,8 +34,9 @@ jobs:
     - name: Create temp project and run dotnet format
       if: steps.changed-files.outputs.files
       run: |
-        dotnet new console -n TempProject
+        dotnet new classlib -n TempProject
         cd TempProject
+        rm Class1.cs  # Remove the default class file
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
           dotnet format --verify-no-changes --include $(basename $file)
