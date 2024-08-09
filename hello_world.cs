@@ -1,4 +1,1 @@
-```csharp
-using System;
-Console.WriteLine("Nick's first C# program");
-```
+Console.WriteLine("Nick's first CSharp program");
