@@ -33,9 +33,9 @@ jobs:
     - name: Install .NET SDK
       uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: '7.x'  # Use the appropriate .NET version
+        dotnet-version: '7.x'
 
-    - name: Create temp project and run dotnet format
+    - name: Create temp project
       if: steps.changed-files.outputs.files
       run: |
         dotnet new console -n TempProject
@@ -43,8 +43,25 @@ jobs:
         rm Program.cs
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
-          dotnet format --verify-no-changes --include $(basename $file)
         done
+
+    - name: Run dotnet format
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
+        echo "🔧 Running dotnet format..."
+        dotnet format --verify-no-changes > format_output.log || true
+        cat format_output.log
+
+    - name: Collect Formatting Issues
+      if: steps.changed-files.outputs.files
+      run: |
+        mkdir -p format_issues
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          cp "TempProject/$(basename "$file")" "format_issues/"
+        done
+        cat TempProject/format_output.log > format_issues/format_output.log
+        echo "📄 Collected formatting issues."
 
     - name: Analyze C# Files
       if: steps.changed-files.outputs.files
@@ -52,17 +69,34 @@ jobs:
         mkdir -p stylecop_output
         for file in ${{ steps.changed-files.outputs.files }}; do
           echo "📄 Analyzing $file"
-          
-          # Generate issues file
           issues_file="stylecop_output/$(basename "$file").txt"
           dotnet build /p:TreatWarningsAsErrors=true 2>&1 | tee "$issues_file"
 
           if [ -s "$issues_file" ]; then
             echo "🚨 StyleCop issues found:"
             cat "$issues_file"
+          else
+            echo "✅ No StyleCop issues found for $file"
+          fi
+        done
+
+    - name: Fix C# Files Using Model
+      if: steps.changed-files.outputs.files
+      run: |
+        echo "🔍 Finding and fixing StyleCop issues..."
+        mkdir -p fixed_files
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          echo "📄 Fixing $file"
+          
+          # Read StyleCop issues
+          issues_file="stylecop_output/$(basename "$file").txt"
+          issues=$(cat "$issues_file" || true)
+
+          if [ -n "$issues" ]; then
+            echo "🚨 StyleCop issues found:"
+            echo "$issues"
             
             # Create prompt for the model
-            issues=$(cat "$issues_file")
             prompt="You are a C# expert. Given the following StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. Errors: $(echo "$issues" | tr '\n' ' ')"
 
             echo "🌐 Using ilab model chat for fixing..."
