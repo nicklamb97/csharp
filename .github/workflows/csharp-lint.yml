@@ -38,7 +38,6 @@ jobs:
         done
         dotnet build /p:TreatWarningsAsErrors=true > build_output.txt 2>&1 || true
     - name: Extract StyleCop errors
-      if: env.files
       id: extract-errors
       run: |
         cd TempProject
@@ -47,13 +46,13 @@ jobs:
           echo "No StyleCop errors found"
           exit 0
         fi
-        echo "errors=$errors" >> $GITHUB_ENV
+        # Use `set-output` for passing errors to the next step
+        echo "errors<<EOF" >> $GITHUB_ENV
+        echo "$errors" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
 
     - name: Send errors to HuggingFace model and get fixes
-      if: env.errors
       id: hf-fixes
-      env:
-        HF_API_TOKEN: ${{ secrets.HF_TOKEN }}
       run: |
         # Create the prompt by replacing newlines with spaces
         prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $(echo "${{ env.errors }}" | tr '\n' ' ')"
@@ -63,7 +62,7 @@ jobs:
         
         response=$(curl -s https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407 \
           -X POST \
-          -H "Authorization: Bearer $HF_API_TOKEN" \
+          -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}" \
           -H "Content-Type: application/json" \
           -d "{\"inputs\": \"$prompt\"}")
         
@@ -81,7 +80,9 @@ jobs:
           exit 1
         fi
         
-        echo "fixes=$fixes" >> $GITHUB_ENV
+        echo "fixes<<EOF" >> $GITHUB_ENV
+        echo "$fixes" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
     - name: Apply fixes
       if: env.fixes
       run: |
