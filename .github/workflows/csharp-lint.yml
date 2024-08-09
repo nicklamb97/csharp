@@ -60,10 +60,9 @@ jobs:
       if: steps.extract-errors.outputs.errors
       id: hf-fixes
       env:
-        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
       run: |
         # Create the prompt by replacing newlines with spaces
-        echo "$HF_TOKEN"
         formatted_errors=$(echo "${{ steps.extract-errors.outputs.errors }}" | tr '\n' ' ')
         prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $formatted_errors"
           
@@ -72,14 +71,15 @@ jobs:
         
         response=$(curl -s https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407 \
           -X POST \
-          -H "Authorization: Bearer $HF_TOKEN" \
+          -H "Authorization: Bearer $HF_API_TOKEN" \
           -H "Content-Type: application/json" \
           -d "{\"inputs\": \"$prompt\"}")
         
         echo "Raw response from HuggingFace:"
         echo "$response"
         
-        if ! fixes=$(echo "$response" | jq -r '.generated_text' 2>/dev/null); then
+        # Parse the generated_text from the JSON array response
+        if ! fixes=$(echo "$response" | jq -r '.[0].generated_text' 2>/dev/null); then
           echo "Error: Failed to parse JSON response from HuggingFace"
           echo "Response was: $response"
           exit 1
@@ -93,30 +93,31 @@ jobs:
         echo "fixes<<EOF" >> $GITHUB_OUTPUT
         echo "$fixes" >> $GITHUB_OUTPUT
         echo "EOF" >> $GITHUB_OUTPUT
-
-    - name: Apply fixes
-      if: steps.hf-fixes.outputs.fixes
-      run: |
-        cd TempProject
-        echo "${{ steps.hf-fixes.outputs.fixes }}" > fixes.txt
-        for file in *.cs; do
-          awk '
-            NR==FNR {
-              fixes[$1] = $0
-              next
-            }
-            {
-              for (pattern in fixes) {
-                if ($0 ~ pattern) {
-                  print fixes[pattern]
+    
+    
+        - name: Apply fixes
+          if: steps.hf-fixes.outputs.fixes
+          run: |
+            cd TempProject
+            echo "${{ steps.hf-fixes.outputs.fixes }}" > fixes.txt
+            for file in *.cs; do
+              awk '
+                NR==FNR {
+                  fixes[$1] = $0
                   next
                 }
-              }
-              print
-            }
-          ' fixes.txt "$file" > "${file}.fixed"
-          mv "${file}.fixed" "$file"
-        done
+                {
+                  for (pattern in fixes) {
+                    if ($0 ~ pattern) {
+                      print fixes[pattern]
+                      next
+                    }
+                  }
+                  print
+                }
+              ' fixes.txt "$file" > "${file}.fixed"
+              mv "${file}.fixed" "$file"
+            done
 
     - name: Create new branch and push changes
       if: steps.hf-fixes.outputs.fixes
