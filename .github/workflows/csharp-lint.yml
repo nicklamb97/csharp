@@ -60,9 +60,10 @@ jobs:
       if: steps.extract-errors.outputs.errors
       id: hf-fixes
       env:
-        HF_API_TOKEN: ${{ secrets.HF_API_TOKEN }}
+        HF_API_TOKEN: ${{ secrets.HF_TOKEN }}
       run: |
         # Create the prompt by replacing newlines with spaces
+        echo "$HF_API_TOKEN"
         formatted_errors=$(echo "${{ steps.extract-errors.outputs.errors }}" | tr '\n' ' ')
         prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $formatted_errors"
           
