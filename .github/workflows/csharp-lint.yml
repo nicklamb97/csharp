@@ -58,6 +58,7 @@ jobs:
         dotnet format --verify-no-changes > format_output.log || true
         echo "📋 Format output:"
         cat format_output.log
+        echo format_output.log
 
     - name: Collect Formatting Issues
       if: steps.changed-files.outputs.files
