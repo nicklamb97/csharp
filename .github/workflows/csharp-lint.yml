@@ -103,7 +103,7 @@ jobs:
         echo "📋 StyleCop output:"
         cat stylecop_output.log
         echo "📋 StyleCop build output collected."
-        
+
     - name: Fix C# Files Using Model
       if: steps.changed-files.outputs.files
       run: |
@@ -111,17 +111,15 @@ jobs:
         mkdir -p fixed_files
         for file in ${{ steps.changed-files.outputs.files }}; do
           echo "📄 Fixing $file"
-          
-          # Check if StyleCop issues file exists
-          issues_file="stylecop_output/$(basename "$file").txt"
-          if [ -f "$issues_file" ]; then
-            echo "📋 Found issues file: $issues_file"
-            issues=$(cat "$issues_file")
+
+          # Capture StyleCop output for this file
+          stylecop_output=$(grep "$(basename "$file")" stylecop_output.log || true)
+          if [ -n "$stylecop_output" ]; then
             echo "🚨 StyleCop issues for $file:"
-            echo "$issues"
+            echo "$stylecop_output"
             
             # Create prompt for the model
-            prompt="You are a C# expert. Given the following StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. Errors: $(echo "$issues" | tr '\n' ' ')"
+            prompt="You are a C# expert. Given the following StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. Errors: $(echo "$stylecop_output" | tr '\n' ' ')"
 
             echo "🌐 Using ilab model chat for fixing..."
             fixes=$(ilab model chat --max-tokens 30000 -qq "$prompt" 2>&1)
@@ -136,8 +134,8 @@ jobs:
             echo "$fixes" > "$output_file"
             echo "✅ Fixed code saved to $output_file"
           else
-            echo "📄 No StyleCop issues file found for $file"
-            cp "$file" "fixed_files/$(basename "$file")"
+            echo "📄 No StyleCop issues found for $file"
+            cp "TempProject/$(basename "$file")" "fixed_files/$(basename "$file")"
           fi
         done
 
