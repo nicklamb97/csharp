@@ -1,0 +1,30 @@
+name: C# Linting
+
+on:
+  create:
+    branches:
+      - '**'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '7.0.x'  # Adjust this to your project's .NET version
+    
+    - name: Install dotnet-format
+      run: dotnet tool install -g dotnet-format
+    
+    - name: Run dotnet format
+      run: dotnet format --verify-no-changes --verbosity detailed
+    
+    - name: Run StyleCop
+      run: |
+        dotnet new tool-manifest
+        dotnet tool install StyleCop.Analyzers
+        dotnet build /p:TreatWarningsAsErrors=true
