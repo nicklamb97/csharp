@@ -30,15 +30,127 @@ jobs:
         fi
         echo "files=$changed_files" >> $GITHUB_OUTPUT
 
-    - name: Install .NET SDK
-      uses: actions/setup-dotnet@v3
-      with:
-        dotnet-version: '7.x'  # Use the appropriate .NET version
-
     - name: Create temp project and run dotnet format
       if: steps.changed-files.outputs.files
       run: |
         dotnet new console -n TempProject
         cd TempProject
         rm Program.cs
-        for file in ${{ steps.changed-files.outputs
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          cp "../$file" .
+          dotnet format --verify-no-changes --include $(basename $file)
+        done
+
+    - name: Configure StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
+        echo '{
+          "$schema": "https://raw.githubusercontent.com/DotNetAnalyzers/StyleCopAnalyzers/master/StyleCop.Analyzers/StyleCop.Analyzers/Settings/stylecop.schema.json",
+          "settings": {
+            "documentationRules": {
+              "companyName": "YourCompany"
+            }
+          }
+        }' > stylecop.json
+        echo '<Project>
+          <PropertyGroup>
+            <GenerateDocumentationFile>true</GenerateDocumentationFile>
+            <NoWarn>$(NoWarn),1591,SA1633</NoWarn>
+          </PropertyGroup>
+        </Project>' > Directory.Build.props
+
+    - name: Run StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
+        dotnet add package StyleCop.Analyzers
+        dotnet build /p:TreatWarningsAsErrors=true
+
+    - name: Analyze C# Files
+      if: steps.changed-files.outputs.files
+      run: |
+        mkdir -p stylecop_output
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          echo "📄 Analyzing $file"
+          stylecop_output_file="stylecop_output/$(basename "$file").txt"
+          stylecop analyze "$file" > "$stylecop_output_file"
+          echo "✅ Analysis results saved to $stylecop_output_file"
+        done
+
+    - name: Fix C# Files Using Model
+      if: steps.changed-files.outputs.files
+      run: |
+        echo "🔍 Finding and fixing StyleCop issues..."
+        mkdir -p fixed_files
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          echo "📄 Fixing $file"
+          
+          # Read StyleCop issues
+          issues=$(cat "stylecop_output/$(basename "$file").txt")
+
+          if [ -n "$issues" ]; then
+            echo "🚨 StyleCop issues found:"
+            echo "$issues"
+            
+            # Create prompt for the model
+            prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $(echo "$issues" | tr '\n' ' ')"
+
+            echo "🌐 Using ilab model chat for fixing..."
+            fixes=$(ilab model chat --max-tokens 30000 -qq "$prompt" 2>&1)
+            exit_code=$?
+
+            echo "ilab model chat command completed with exit code: $exit_code"
+            echo "$fixes"
+            
+            # Save the fixed code
+            output_file="fixed_files/$(basename "$file")"
+            echo "$fixes" > "$output_file"
+            echo "✅ Fixed code saved to $output_file"
+          else
+            echo "✅ No StyleCop issues found for $file"
+          fi
+        done
+
+    - name: Create PR with fixed files
+      if: steps.changed-files.outputs.files
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        echo "🔄 Cloning C# repository..."
+        git clone "https://github.com/nicklamb97/csharp.git" temp_csharp
+        cd temp_csharp
+        
+        echo "🔧 Configuring git..."
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+        
+        echo "🔀 Creating new branch for fixed files..."
+        BRANCH_NAME="stylecop-fixes-$(date +%Y%m%d-%H%M%S)"
+        git checkout -b "$BRANCH_NAME"
+        
+        echo "📋 Copying fixed files..."
+        cp -r ../fixed_files/* .
+        git add .
+        
+        echo "💾 Committing changes..."
+        git commit -m "Apply StyleCop fixes: ${{ env.COMMIT_MESSAGE }}" || echo "No changes to commit"
+        
+        echo "🚀 Pushing new branch to repository..."
+        git push "https://$GITHUB_TOKEN@github.com/nicklamb97/csharp.git" "$BRANCH_NAME"
+        
+        echo "🔗 Creating pull request..."
+        PR_URL=$(curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
+             -H "Accept: application/vnd.github.v3+json" \
+             https://api.github.com/repos/nicklamb97/csharp/pulls \
+             -d "{
+               \"title\": \"Automated StyleCop Fixes\",
+               \"body\": \"This PR contains automated StyleCop fixes based on the following commit:\\n\\n${{ env.COMMIT_MESSAGE }}\\n\\nPlease review the fixed code and merge if appropriate.\",
+               \"head\": \"$BRANCH_NAME\",
+               \"base\": \"main\"
+             }" | jq -r .html_url)
+        
+        echo "✅ Pull request created: $PR_URL"
+        
+        cd ..
+        rm -rf temp_csharp
