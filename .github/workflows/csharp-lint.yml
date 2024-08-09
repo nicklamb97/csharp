@@ -111,7 +111,7 @@ jobs:
         mkdir -p fixed_files
         for file in ${{ steps.changed-files.outputs.files }}; do
           echo "📄 Fixing $file"
-
+          
           # Capture StyleCop output for this file
           stylecop_output=$(grep "$(basename "$file")" stylecop_output.log || true)
           if [ -n "$stylecop_output" ]; then
