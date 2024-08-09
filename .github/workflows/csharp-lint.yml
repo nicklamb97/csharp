@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
     paths:
-      - '**.cs'  # This will only trigger on .cs file changes
+      - '**.cs'  # Trigger on .cs file changes
 
 env:
   MODEL_NAME: 'mistralai/Mistral-Nemo-Instruct-2407'
@@ -20,46 +20,95 @@ jobs:
       with:
         fetch-depth: 0
 
-    - name: Get commit message
+    - name: Get changed files
+      id: changed-files
       run: |
-        echo "📜 Retrieving commit message for SHA: ${{ github.sha }}"
-        COMMIT_MESSAGE=$(git log --format=%B -n 1 "${{ github.sha }}")
-        echo "COMMIT_MESSAGE<<EOF" >> $GITHUB_ENV
-        echo "$COMMIT_MESSAGE" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
-        echo "✅ Commit message retrieved and stored in environment variable"
+        changed_files=$(git diff --name-only HEAD^ HEAD | grep '\.cs$' || true)
+        if [ -z "$changed_files" ]; then
+          echo "No .cs files changed"
+          exit 0
+        fi
+        echo "files=$changed_files" >> $GITHUB_OUTPUT
 
-    - name: Set up .NET
+    - name: Install .NET SDK
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: '7.x'  # Use the appropriate .NET version
 
-    - name: Install StyleCop as a NuGet package
+    - name: Install StyleCop CLI
       run: |
-        echo "🔧 Adding StyleCop.Analyzers to the project..."
+        echo "🔧 Installing StyleCop CLI..."
+        dotnet tool install --global StyleCop.Analyzers
+        echo "✅ StyleCop CLI installed successfully"
+        echo "$(dotnet --list-tools)"  # List installed tools
+
+    - name: Create temp project and run dotnet format
+      if: steps.changed-files.outputs.files
+      run: |
+        dotnet new console -n TempProject
+        cd TempProject
+        rm Program.cs
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          cp "../$file" .
+          dotnet format --verify-no-changes --include $(basename $file)
+        done
+
+    - name: Configure StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
+        echo '{
+          "$schema": "https://raw.githubusercontent.com/DotNetAnalyzers/StyleCopAnalyzers/master/StyleCop.Analyzers/StyleCop.Analyzers/Settings/stylecop.schema.json",
+          "settings": {
+            "documentationRules": {
+              "companyName": "YourCompany"
+            }
+          }
+        }' > stylecop.json
+        echo '<Project>
+          <PropertyGroup>
+            <GenerateDocumentationFile>true</GenerateDocumentationFile>
+            <NoWarn>$(NoWarn),1591,SA1633</NoWarn>
+          </PropertyGroup>
+        </Project>' > Directory.Build.props
+
+    - name: Run StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
         dotnet add package StyleCop.Analyzers
-        echo "✅ StyleCop.Analyzers added to the project"
+        dotnet build /p:TreatWarningsAsErrors=true
 
-    - name: Restore .NET dependencies
-      run: dotnet restore
-
-    - name: Run StyleCop on changed C# files
+    - name: Analyze C# Files
+      if: steps.changed-files.outputs.files
       run: |
-        echo "🔍 Finding changed C# files..."
-        git diff-tree --no-commit-id --name-only -r ${{ github.sha }} | grep '\.cs$' | while read file; do
-          echo "📄 Processing $file"
-          
-          # Run StyleCop and capture errors
-          stylecop_output=$(dotnet build "$file" | tee /dev/stderr | grep "SA")
-          
-          if [ -n "$stylecop_output" ]; then
-            echo "🚨 StyleCop errors found:"
-            echo "$stylecop_output"
-            
-            # Create a prompt for the model
-            prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $(echo "${stylecop_output}" | tr '\n' ' ')"
+        mkdir -p stylecop_output
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          echo "📄 Analyzing $file"
+          stylecop_output_file="stylecop_output/$(basename "$file").txt"
+          stylecop analyze "$file" > "$stylecop_output_file"
+          echo "✅ Analysis results saved to $stylecop_output_file"
+        done
 
-            echo "🌐 Using ilab model chat for linting..."
+    - name: Fix C# Files Using Model
+      if: steps.changed-files.outputs.files
+      run: |
+        echo "🔍 Finding and fixing StyleCop issues..."
+        mkdir -p fixed_files
+        for file in ${{ steps.changed-files.outputs.files }}; do
+          echo "📄 Fixing $file"
+          
+          # Read StyleCop issues
+          issues=$(cat "stylecop_output/$(basename "$file").txt")
+
+          if [ -n "$issues" ]; then
+            echo "🚨 StyleCop issues found:"
+            echo "$issues"
+            
+            # Create prompt for the model
+            prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $(echo "$issues" | tr '\n' ' ')"
+
+            echo "🌐 Using ilab model chat for fixing..."
             fixes=$(ilab model chat --max-tokens 30000 -qq "$prompt" 2>&1)
             exit_code=$?
 
@@ -68,15 +117,15 @@ jobs:
             
             # Save the fixed code
             output_file="fixed_files/$(basename "$file")"
-            mkdir -p fixed_files
             echo "$fixes" > "$output_file"
             echo "✅ Fixed code saved to $output_file"
           else
-            echo "✅ No StyleCop errors found for $file"
+            echo "✅ No StyleCop issues found for $file"
           fi
         done
 
     - name: Create PR with fixed files
+      if: steps.changed-files.outputs.files
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
