@@ -43,10 +43,8 @@ jobs:
         rm Program.cs
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
+          dotnet format --verify-no-changes --include $(basename $file)
         done
-
-        # Format the code to identify formatting issues
-        dotnet format --verify-no-changes
 
     - name: Analyze C# Files
       if: steps.changed-files.outputs.files
