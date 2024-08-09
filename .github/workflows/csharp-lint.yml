@@ -58,7 +58,6 @@ jobs:
         dotnet format --verify-no-changes > format_output.log || true
         echo "📋 Format output:"
         cat format_output.log
-        echo format_output.log
 
     - name: Collect Formatting Issues
       if: steps.changed-files.outputs.files
@@ -66,24 +65,45 @@ jobs:
         echo "🔧 Collecting formatting issues..."
         mkdir -p format_issues
         cp TempProject/format_output.log format_issues/format_output.log
-        echo "📄 Formatting issues collected:"
+        echo "📋 Formatting issues collected:"
         cat format_issues/format_output.log
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "TempProject/$(basename "$file")" "format_issues/"
           echo "Collected file: $(basename "$file")"
         done
 
-    - name: Analyze C# Files
+    - name: Configure StyleCop
       if: steps.changed-files.outputs.files
       run: |
-        echo "🔧 Analyzing C# files..."
-        mkdir -p stylecop_output
-        for file in ${{ steps.changed-files.outputs.files }}; do
-          echo "📄 Analyzing $file"
-          cp "$file" "stylecop_output/"
-        done
-        echo "📋 Files ready for StyleCop analysis."
+        echo "🔧 Configuring StyleCop..."
+        cd TempProject
+        echo '{
+          "$schema": "https://raw.githubusercontent.com/DotNetAnalyzers/StyleCopAnalyzers/master/StyleCop.Analyzers/StyleCop.Analyzers/Settings/stylecop.schema.json",
+          "settings": {
+            "documentationRules": {
+              "companyName": "YourCompany"
+            }
+          }
+        }' > stylecop.json
+        echo '<Project>
+          <PropertyGroup>
+            <GenerateDocumentationFile>true</GenerateDocumentationFile>
+            <NoWarn>$(NoWarn),1591,SA1633</NoWarn>
+          </PropertyGroup>
+        </Project>' > Directory.Build.props
+        echo "📋 StyleCop configuration complete."
 
+    - name: Run StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        echo "🔧 Running StyleCop..."
+        cd TempProject
+        dotnet add package StyleCop.Analyzers
+        dotnet build /p:TreatWarningsAsErrors=true > stylecop_output.log || true
+        echo "📋 StyleCop output:"
+        cat stylecop_output.log
+        echo "📋 StyleCop build output collected."
+        
     - name: Fix C# Files Using Model
       if: steps.changed-files.outputs.files
       run: |
