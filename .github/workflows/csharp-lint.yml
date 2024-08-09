@@ -57,7 +57,8 @@ jobs:
       env:
         HF_API_TOKEN: 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
       run: |
-        prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors:  ${{ steps.extract-errors.outputs.errors | sed ':a;N;$!ba;s/\n/ /g' }}"
+        # Create the prompt by replacing newlines with spaces
+        prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $(echo \"${{ steps.extract-errors.outputs.errors }}\" | tr '\n' ' ')"
           
         echo "Sending prompt to HuggingFace model:"
         echo "$prompt"
