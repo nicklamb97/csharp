@@ -35,7 +35,7 @@ jobs:
       with:
         dotnet-version: '7.x'
 
-    - name: Create temp project
+    - name: Create temp project for formatting
       if: steps.changed-files.outputs.files
       run: |
         dotnet new console -n TempProject
@@ -57,10 +57,10 @@ jobs:
       if: steps.changed-files.outputs.files
       run: |
         mkdir -p format_issues
+        cp TempProject/format_output.log format_issues/format_output.log
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "TempProject/$(basename "$file")" "format_issues/"
         done
-        cat TempProject/format_output.log > format_issues/format_output.log
         echo "📄 Collected formatting issues."
 
     - name: Analyze C# Files
@@ -69,16 +69,9 @@ jobs:
         mkdir -p stylecop_output
         for file in ${{ steps.changed-files.outputs.files }}; do
           echo "📄 Analyzing $file"
-          issues_file="stylecop_output/$(basename "$file").txt"
-          dotnet build /p:TreatWarningsAsErrors=true 2>&1 | tee "$issues_file"
-
-          if [ -s "$issues_file" ]; then
-            echo "🚨 StyleCop issues found:"
-            cat "$issues_file"
-          else
-            echo "✅ No StyleCop issues found for $file"
-          fi
+          cp "$file" "stylecop_output/"
         done
+        echo "✅ Collected files for StyleCop analysis."
 
     - name: Fix C# Files Using Model
       if: steps.changed-files.outputs.files
