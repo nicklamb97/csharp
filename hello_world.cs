@@ -1,1 +1,2 @@
-Console.WriteLine("Nick's first CSharp program");
+
+Console.WriteLine("Nick's first C# program!");
