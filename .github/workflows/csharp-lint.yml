@@ -1,9 +1,9 @@
-name: C# Linting
+name: C# Linting on Main
 
 on:
-  create:
+  push:
     branches:
-      - '**'
+      - main
 
 jobs:
   lint:
