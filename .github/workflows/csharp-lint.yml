@@ -5,7 +5,6 @@ on:
       - main
     paths:
       - '**.cs'
-
 jobs:
   lint-and-fix:
     runs-on: ubuntu-latest
@@ -14,12 +13,10 @@ jobs:
     - uses: actions/checkout@v3
       with:
         fetch-depth: 2
-
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
         dotnet-version: '7.0.x'
-
     - name: Get changed files
       id: changed-files
       run: |
@@ -28,22 +25,20 @@ jobs:
           echo "No .cs files changed"
           exit 0
         fi
-        echo "files=$changed_files" >> $GITHUB_OUTPUT
-
+        echo "files=$changed_files" >> $GITHUB_ENV
     - name: Create temp project and run StyleCop
-      if: steps.changed-files.outputs.files
+      if: env.files
       run: |
         dotnet new console -n TempProject
         cd TempProject
         rm Program.cs
         dotnet add package StyleCop.Analyzers
-        for file in ${{ steps.changed-files.outputs.files }}; do
+        for file in ${{ env.files }}; do
           cp "../$file" .
         done
         dotnet build /p:TreatWarningsAsErrors=true > build_output.txt 2>&1 || true
-
     - name: Extract StyleCop errors
-      if: steps.changed-files.outputs.files
+      if: env.files
       id: extract-errors
       run: |
         cd TempProject
@@ -52,34 +47,31 @@ jobs:
           echo "No StyleCop errors found"
           exit 0
         fi
-        echo "errors<<EOF" >> $GITHUB_OUTPUT
-        echo "$errors" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+        echo "errors<<EOF" >> $GITHUB_ENV
+        echo "$errors" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
 
     - name: Send errors to HuggingFace model and get fixes
-      if: steps.extract-errors.outputs.errors
+      if: env.errors
       id: hf-fixes
       env:
-        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        HF_API_TOKEN: ${{ secrets.HF_TOKEN }}
       run: |
-        # Create the prompt by replacing newlines with spaces
-        formatted_errors=$(echo "${{ steps.extract-errors.outputs.errors }}" | tr '\n' ' ')
-        prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: $formatted_errors"
-          
+        prompt="You are a C# expert. Given StyleCop errors, suggest fixes without explanations. Provide only the corrected code snippets. StyleCop errors: ${{ env.errors | sed ':a;N;$!ba;s/\n/ /g' }}"
+        
         echo "Sending prompt to HuggingFace model:"
         echo "$prompt"
         
         response=$(curl -s https://api-inference.huggingface.co/models/mistralai/Mistral-Nemo-Instruct-2407 \
           -X POST \
-          -H "Authorization: Bearer $HF_TOKEN" \
+          -H "Authorization: Bearer $HF_API_TOKEN" \
           -H "Content-Type: application/json" \
           -d "{\"inputs\": \"$prompt\"}")
         
         echo "Raw response from HuggingFace:"
         echo "$response"
         
-        # Parse the generated_text from the JSON array response
-        if ! fixes=$(echo "$response" | jq -r '.[0].generated_text' 2>/dev/null); then
+        if ! fixes=$(echo "$response" | jq -r '.generated_text' 2>/dev/null); then
           echo "Error: Failed to parse JSON response from HuggingFace"
           echo "Response was: $response"
           exit 1
@@ -90,37 +82,34 @@ jobs:
           exit 1
         fi
         
-        echo "fixes<<EOF" >> $GITHUB_OUTPUT
-        echo "$fixes" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-    
-    
-        - name: Apply fixes
-          if: steps.hf-fixes.outputs.fixes
-          run: |
-            cd TempProject
-            echo "${{ steps.hf-fixes.outputs.fixes }}" > fixes.txt
-            for file in *.cs; do
-              awk '
-                NR==FNR {
-                  fixes[$1] = $0
+        echo "fixes<<EOF" >> $GITHUB_ENV
+        echo "$fixes" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+    - name: Apply fixes
+      if: env.fixes
+      run: |
+        cd TempProject
+        echo "${{ env.fixes }}" > fixes.txt
+        for file in *.cs; do
+          awk '
+            NR==FNR {
+              fixes[$1] = $0
+              next
+            }
+            {
+              for (pattern in fixes) {
+                if ($0 ~ pattern) {
+                  print fixes[pattern]
                   next
                 }
-                {
-                  for (pattern in fixes) {
-                    if ($0 ~ pattern) {
-                      print fixes[pattern]
-                      next
-                    }
-                  }
-                  print
-                }
-              ' fixes.txt "$file" > "${file}.fixed"
-              mv "${file}.fixed" "$file"
-            done
-
+              }
+              print
+            }
+          ' fixes.txt "$file" > "${file}.fixed"
+          mv "${file}.fixed" "$file"
+        done
     - name: Create new branch and push changes
-      if: steps.hf-fixes.outputs.fixes
+      if: env.fixes
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
@@ -129,9 +118,8 @@ jobs:
         git add .
         git commit -m "Apply StyleCop fixes" || echo "No changes to commit"
         git push -u origin $branch_name
-
     - name: Create Pull Request
-      if: steps.hf-fixes.outputs.fixes
+      if: env.fixes
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
