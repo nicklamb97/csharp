@@ -34,11 +34,14 @@ jobs:
       with:
         dotnet-version: '7.x'  # Use the appropriate .NET version
 
-    - name: Install StyleCop
+    - name: Install StyleCop as a NuGet package
       run: |
-        echo "🔧 Installing StyleCop..."
-        dotnet tool install -g StyleCop.Analyzers
-        echo "✅ StyleCop installed"
+        echo "🔧 Adding StyleCop.Analyzers to the project..."
+        dotnet add package StyleCop.Analyzers
+        echo "✅ StyleCop.Analyzers added to the project"
+
+    - name: Restore .NET dependencies
+      run: dotnet restore
 
     - name: Run StyleCop on changed C# files
       run: |
@@ -47,7 +50,7 @@ jobs:
           echo "📄 Processing $file"
           
           # Run StyleCop and capture errors
-          stylecop_output=$(dotnet stylecop analyze "$file")
+          stylecop_output=$(dotnet build "$file" | tee /dev/stderr | grep "SA")
           
           if [ -n "$stylecop_output" ]; then
             echo "🚨 StyleCop errors found:"
