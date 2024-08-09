@@ -14,13 +14,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
       with:
-        fetch-depth: 2  # To be able to get the changed files
-    
+        fetch-depth: 2
+
     - name: Setup .NET
       uses: actions/setup-dotnet@v3
       with:
-        dotnet-version: '7.0.x'  # Adjust this to your .NET version if needed
-    
+        dotnet-version: '7.0.x'
+
     - name: Get changed files
       id: changed-files
       run: |
@@ -30,18 +30,37 @@ jobs:
           exit 0
         fi
         echo "files=$changed_files" >> $GITHUB_OUTPUT
-    
+
     - name: Create temp project and run dotnet format
       if: steps.changed-files.outputs.files
       run: |
-        dotnet new classlib -n TempProject
+        dotnet new console -n TempProject
         cd TempProject
-        rm Class1.cs  # Remove the default class file
+        rm Program.cs
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
           dotnet format --verify-no-changes --include $(basename $file)
         done
-    
+
+    - name: Configure StyleCop
+      if: steps.changed-files.outputs.files
+      run: |
+        cd TempProject
+        echo '{
+          "$schema": "https://raw.githubusercontent.com/DotNetAnalyzers/StyleCopAnalyzers/master/StyleCop.Analyzers/StyleCop.Analyzers/Settings/stylecop.schema.json",
+          "settings": {
+            "documentationRules": {
+              "companyName": "YourCompany"
+            }
+          }
+        }' > stylecop.json
+        echo '<Project>
+          <PropertyGroup>
+            <GenerateDocumentationFile>true</GenerateDocumentationFile>
+            <NoWarn>$(NoWarn),1591,SA1633</NoWarn>
+          </PropertyGroup>
+        </Project>' > Directory.Build.props
+
     - name: Run StyleCop
       if: steps.changed-files.outputs.files
       run: |
