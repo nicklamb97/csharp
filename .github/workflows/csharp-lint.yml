@@ -23,11 +23,13 @@ jobs:
     - name: Get changed files
       id: changed-files
       run: |
+        echo "🔍 Getting list of changed .cs files..."
         changed_files=$(git diff --name-only HEAD^ HEAD | grep '\.cs$' || true)
         if [ -z "$changed_files" ]; then
           echo "No .cs files changed"
           exit 0
         fi
+        echo "Changed .cs files: $changed_files"
         echo "files=$changed_files" >> $GITHUB_OUTPUT
 
     - name: Install .NET SDK
@@ -38,40 +40,48 @@ jobs:
     - name: Create temp project for formatting
       if: steps.changed-files.outputs.files
       run: |
+        echo "🔧 Creating temporary .NET project..."
         dotnet new console -n TempProject
         cd TempProject
         rm Program.cs
+        echo "📄 Copying changed .cs files into TempProject..."
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "../$file" .
+          echo "Copied $file"
         done
 
     - name: Run dotnet format
       if: steps.changed-files.outputs.files
       run: |
-        cd TempProject
         echo "🔧 Running dotnet format..."
+        cd TempProject
         dotnet format --verify-no-changes > format_output.log || true
+        echo "📋 Format output:"
         cat format_output.log
 
     - name: Collect Formatting Issues
       if: steps.changed-files.outputs.files
       run: |
+        echo "🔧 Collecting formatting issues..."
         mkdir -p format_issues
         cp TempProject/format_output.log format_issues/format_output.log
+        echo "📄 Formatting issues collected:"
+        cat format_issues/format_output.log
         for file in ${{ steps.changed-files.outputs.files }}; do
           cp "TempProject/$(basename "$file")" "format_issues/"
+          echo "Collected file: $(basename "$file")"
         done
-        echo "📄 Collected formatting issues."
 
     - name: Analyze C# Files
       if: steps.changed-files.outputs.files
       run: |
+        echo "🔧 Analyzing C# files..."
         mkdir -p stylecop_output
         for file in ${{ steps.changed-files.outputs.files }}; do
           echo "📄 Analyzing $file"
           cp "$file" "stylecop_output/"
         done
-        echo "✅ Collected files for StyleCop analysis."
+        echo "📋 Files ready for StyleCop analysis."
 
     - name: Fix C# Files Using Model
       if: steps.changed-files.outputs.files
@@ -81,12 +91,12 @@ jobs:
         for file in ${{ steps.changed-files.outputs.files }}; do
           echo "📄 Fixing $file"
           
-          # Read StyleCop issues
+          # Check if StyleCop issues file exists
           issues_file="stylecop_output/$(basename "$file").txt"
-          issues=$(cat "$issues_file" || true)
-
-          if [ -n "$issues" ]; then
-            echo "🚨 StyleCop issues found:"
+          if [ -f "$issues_file" ]; then
+            echo "📋 Found issues file: $issues_file"
+            issues=$(cat "$issues_file")
+            echo "🚨 StyleCop issues for $file:"
             echo "$issues"
             
             # Create prompt for the model
@@ -97,6 +107,7 @@ jobs:
             exit_code=$?
 
             echo "ilab model chat command completed with exit code: $exit_code"
+            echo "📋 Fixes for $file:"
             echo "$fixes"
             
             # Save the fixed code
@@ -104,7 +115,7 @@ jobs:
             echo "$fixes" > "$output_file"
             echo "✅ Fixed code saved to $output_file"
           else
-            echo "✅ No StyleCop issues found for $file"
+            echo "📄 No StyleCop issues file found for $file"
             cp "$file" "fixed_files/$(basename "$file")"
           fi
         done
@@ -134,7 +145,7 @@ jobs:
         git commit -m "Apply StyleCop fixes: ${{ env.COMMIT_MESSAGE }}" || echo "No changes to commit"
         
         echo "🚀 Pushing new branch to repository..."
-        git push "https://$GITHUB_TOKEN@github.com/nicklamb97/csharp.git" "$BRANCH_NAME"
+        git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/nicklamb97/csharp.git" "$BRANCH_NAME"
         
         echo "🔗 Creating pull request..."
         PR_URL=$(curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
